@@ -21,34 +21,46 @@ namespace BrainStormEra.Controllers
             _context = context;
             _logger = logger;
         }
-
         [HttpGet]
         public IActionResult Notifications()
         {
-            // set cứng để test 
-            //var userId = "IN01";
+            // Lấy user_id và user_role từ cookies (nếu cần thiết)
+            var currentUserId = Request.Cookies["user_id"];
+            var currentUserRole = Request.Cookies["user_role"];
 
-            var userId = HttpContext.Session.GetString("user_id");
-            var userRole = HttpContext.Session.GetString("user_role");
+            _logger.LogInformation("Current UserId from cookie: {UserId}", currentUserId);
 
-            // Lọc thông báo theo UserId
+            if (string.IsNullOrEmpty(currentUserId))
+            {
+                return Unauthorized(); // Nếu người dùng chưa đăng nhập, trả về Unauthorized
+            }
+
+
+
+            // Lấy tất cả thông báo được gửi đến người dùng hiện tại hoặc được tạo bởi người dùng hiện tại
             var notifications = _context.Notifications
-                                        .Where(n => n.UserId == userId)
+                                        .Where(n => n.UserId == currentUserId || n.CreatedBy == currentUserId)
                                         .OrderByDescending(n => n.NotificationCreatedAt)
                                         .ToList();
 
-            _logger.LogInformation("Number of notifications for user {userId}: {count}", userId, notifications.Count);
+            foreach (var notification in notifications)
+            {
+                _logger.LogInformation("Notification: {NotificationId}, CreatedBy: {CreatedBy}, SentTo: {UserId}",
+                                       notification.NotificationId, notification.CreatedBy, notification.UserId);
+            }
 
-            // Truyền thêm UserId vào ViewBag để sử dụng trong View, dùng để test
-            ViewBag.UserRole = userRole;
+            _logger.LogInformation("Number of notifications for user {currentUserId}: {count}", currentUserId, notifications.Count);
 
-            return PartialView("_NotificationsModal", notifications);
+            return PartialView("~/Views/Home/Notification/_NotificationsModal.cshtml", notifications);
         }
+
+
+
 
         public JsonResult GetUsers()
         {
             // Lấy user_id của người đang đăng nhập từ session
-            var currentUserId = HttpContext.Session.GetString("user_id");
+            var currentUserId = Request.Cookies["user_id"];
 
             // Lấy danh sách user từ cơ sở dữ liệu, loại bỏ người đang đăng nhập hiện tại
             var users = _context.Accounts
@@ -76,6 +88,9 @@ namespace BrainStormEra.Controllers
 
             try
             {
+                // Lấy giá trị created_by từ cookie (ID của người đăng nhập hiện tại)
+                var createdBy = Request.Cookies["user_id"];
+
                 // Lấy tất cả các NotificationId hiện tại, loại bỏ phần "N" và chuyển thành số nguyên
                 var existingIds = _context.Notifications
                                           .Select(n => n.NotificationId)
@@ -86,10 +101,10 @@ namespace BrainStormEra.Controllers
                 // Tìm số lớn nhất trong các ID hiện tại và cộng thêm 1 để tạo ID mới
                 int nextIdNumber = existingIds.Count > 0 ? existingIds.Max() + 1 : 1;
 
-                foreach (var userId in model.UserId)
+                foreach (var userId in model.UserIds)
                 {
-                    // Tạo ID mới theo định dạng "N{number}"
-                    string newNotificationId = "N" + nextIdNumber.ToString();
+                    // Tạo ID mới theo định dạng "N{number}" với số có độ dài tối thiểu là 2 chữ số
+                    string newNotificationId = "N" + nextIdNumber.ToString().PadLeft(2, '0');
 
                     var newNotification = new Notification
                     {
@@ -98,7 +113,8 @@ namespace BrainStormEra.Controllers
                         NotificationTitle = model.NotificationTitle,
                         NotificationContent = model.NotificationContent,
                         NotificationType = model.NotificationType,
-                        NotificationCreatedAt = DateTime.Now
+                        NotificationCreatedAt = DateTime.Now,
+                        CreatedBy = createdBy // Thêm created_by
                     };
 
                     _context.Notifications.Add(newNotification);
@@ -113,6 +129,7 @@ namespace BrainStormEra.Controllers
                 return Json(new { success = false, message = "Error creating notification: " + ex.Message });
             }
         }
+
 
 
 
@@ -138,6 +155,8 @@ namespace BrainStormEra.Controllers
                 }
             });
         }
+
+
 
 
         [HttpPost]
@@ -181,7 +200,7 @@ namespace BrainStormEra.Controllers
             [Key]
             [DatabaseGenerated(DatabaseGeneratedOption.None)]
 
-            public List<string> UserId { get; set; }
+            public List<string> UserIds { get; set; }
             public string NotificationTitle { get; set; }
             public string NotificationContent { get; set; }
             public string NotificationType { get; set; }
